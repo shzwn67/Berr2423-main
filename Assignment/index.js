@@ -9,10 +9,12 @@ const jwt = require('jsonwebtoken'); // Import JSON Web Token for authentication
 const path = require('path'); // Import path module for working with file and directory paths
 const cors = require('cors'); // Import CORS for cross-origin resource sharing
 const { MongoClient, ObjectId, ServerApiVersion } = require('mongodb'); // Import MongoDB client and necessary classes
+const dotenv = require('dotenv'); // Import dotenv for environment variables
 require('dotenv').config(); // Load environment variables from the .env file
 
 // MongoDB connection URI
-const uri = "mongodb+srv://b022210091:Ew%40nx45%23@cluster0.d52rwim.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"; // MongoDB URI for connection
+const uri = process.env.DB_URI; // Get the MongoDB URI from .env\
+
 
 // MongoDB client setup
 const client = new MongoClient(uri, {
@@ -20,6 +22,8 @@ const client = new MongoClient(uri, {
     version: ServerApiVersion.v1, // Specify server API version
     strict: true, // Enable strict mode for MongoDB
     deprecationErrors: true, // Enable deprecation errors for MongoDB
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
   }
 });
 
@@ -58,6 +62,8 @@ function verifyToken(req, res, next) {
   });
 }
 
+
+
 // Middleware to verify if the user exists in either player or admin collection
 async function verifyUser(req, res, next) {
   const { username } = req.body; // Get username from request body
@@ -78,64 +84,44 @@ async function verifyUser(req, res, next) {
   next(); // Proceed to next middleware or route handler
 }
 
-// Register endpoint
-/*app.post('/register', async (req, res) => {
-  try {
-    // Check if username already exists in player collection
-    let existingPlayer = await client.db("Database_Assignment").collection("player").findOne({ username: req.body.username });
-    // Check if username already exists in admin collection
-    let existingAdmin = await client.db("Database_Assignment").collection("admin").findOne({ username: req.body.username });
-
-    if (existingPlayer || existingAdmin) {
-      // If username exists in either collection, return 400 status
-      return res.status(400).json({ error: "Username already exists" });
-    }
-
-    // Determine role based on password provided and hash password
-    const role = req.body.password === process.env.ADMIN_PASSWORD ? 'admin' : 'player';
-    const hash = bcrypt.hashSync(req.body.password, 10); // Hash the password with bcrypt
-
-    // Insert new user into the appropriate collection based on role
-    let result = await client.db("Database_Assignment").collection(role).insertOne({
-      username: req.body.username,
-      password: hash,
-      name: req.body.name,
-      email: req.body.email,
-      role: role
-    });
-
-    // Respond based on role
-    if (role === 'admin') {
-      console.log('Admin registration successful:', result); // Log admin registration success
-      res.status(201).json({ message: 'Admin registration successful', result }); // Send success response for admin
-    } else if (role === 'player') {
-      console.log('Player registration successful:', result); // Log player registration success
-      res.status(201).json({ message: 'Player registration successful', result }); // Send success response for player
-    }
-  } catch (err) {
-    console.error('Error during registration:', err); // Log any errors during registration
-    res.status(500).json({ error: 'Registration failed' }); // Send error response
-  }
-});*/
 console.log("Admin Password from .env:", process.env.ADMIN_PASSWORD);
 
-app.post('/register', async (req, res) => {
+//register endpoint
+const { body, validationResult } = require('express-validator');
+
+app.post('/register', [
+  // Validate the username: it must be alphanumeric and trim any whitespace
+  body('username').isAlphanumeric().trim(),
+  
+  // Validate the password: it must be at least 8 characters long and escape HTML characters
+  body('password').isLength({ min: 8 }).escape(),
+  
+  // Additional validation for the name and email if needed
+  body('name').notEmpty().trim(),
+  body('email').isEmail().normalizeEmail()
+], async (req, res) => {
+  // Check for validation errors
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() }); // Return validation errors
+  }
+
   try {
     // Check if username already exists in player collection
     let existingPlayer = await client.db("Database_Assignment").collection("player").findOne({ username: req.body.username });
+    
     // Check if username already exists in admin collection
     let existingAdmin = await client.db("Database_Assignment").collection("admin").findOne({ username: req.body.username });
 
     if (existingPlayer || existingAdmin) {
-      // If username exists in either collection, return 400 status
-      return res.status(400).json({ error: "Username already exists" });
+      return res.status(400).json({ error: "Username already exists" }); // If username exists, return error
     }
 
-    // Determine role based on password provided
+    // Determine role based on password provided (if it's the admin password)
     const role = req.body.password === process.env.ADMIN_PASSWORD ? 'admin' : 'player';
     const hash = bcrypt.hashSync(req.body.password, 10); // Hash the password with bcrypt
 
-    // Insert new user into the appropriate collection based on role
+    // Insert new user into the appropriate collection based on the role
     let result = await client.db("Database_Assignment").collection(role).insertOne({
       username: req.body.username,
       password: hash,
@@ -144,36 +130,65 @@ app.post('/register', async (req, res) => {
       role: role
     });
 
-    // Respond based on role
+    // Respond with success message
     res.status(201).json({
       message: `${role.charAt(0).toUpperCase() + role.slice(1)} registration successful`,
       result
     });
   } catch (err) {
-    console.error('Error during registration:', err); // Log any errors during registration
-    res.status(500).json({ error: 'Registration failed' }); // Send error response
+    console.error('Error during registration:', err);
+    res.status(500).json({ error: 'Registration failed' }); // Return error if registration fails
   }
 });
 
-//
 
-// Login endpoint
-app.post('/login', async (req, res) => {
+//
+const helmet = require('helmet'); // Import Helmet for security headers
+app.use(helmet()); // Enable Helmet middleware
+
+
+//const { body, validationResult } = require('express-validator');
+//const bcrypt = require('bcrypt');
+//const jwt = require('jsonwebtoken');
+const rateLimitCache = new Map(); // In-memory cache for rate limiting (use Redis for production)
+
+// Configuration
+const MAX_ATTEMPTS = 3; // Maximum failed attempts before lockout
+const LOCKOUT_TIME = 5 * 60 * 1000; // Lockout time in milliseconds (5 minutes)
+
+// Login endpoint with validation and rate limiting
+app.post('/login', [
+  body('username').isAlphanumeric().trim(), // Ensures the username is alphanumeric and trims whitespace
+  body('password').isLength({ min: 8 }).escape() // Validates the password has at least 8 characters and escapes HTML characters
+], async (req, res) => {
+  // Check for validation errors
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ errors: errors.array() }); // If validation fails, return errors
+  }
+
+  const { username, password } = req.body;
+
+  // Rate limiting logic
+  const currentTime = Date.now();
+  const rateLimitEntry = rateLimitCache.get(username) || { attempts: 0, lockoutUntil: null };
+
+  if (rateLimitEntry.lockoutUntil && currentTime < rateLimitEntry.lockoutUntil) {
+    const remainingTime = Math.ceil((rateLimitEntry.lockoutUntil - currentTime) / 1000);
+    return res.status(429).json({ error: `Account locked. Try again in ${remainingTime} seconds.` }); // 429 Too Many Requests
+  }
+
   try {
-    console.log('Login attempt for username:', req.body.username); // Log login attempt
+    console.log('Login attempt for username:', username); // Log login attempt
 
     // Check if user exists in player collection
-    let user = await client.db("Database_Assignment").collection("player").findOne({
-      username: req.body.username
-    });
+    let user = await client.db("Database_Assignment").collection("player").findOne({ username });
 
     // If not found in player collection, check admin collection
     if (!user) {
       console.log('Username not found in player collection, checking admin collection');
 
-      user = await client.db("Database_Assignment").collection("admin").findOne({
-        username: req.body.username
-      });
+      user = await client.db("Database_Assignment").collection("admin").findOne({ username });
 
       if (!user) {
         console.log('Username not found in admin collection');
@@ -184,19 +199,48 @@ app.post('/login', async (req, res) => {
     console.log('User found:', user); // Log user found
 
     // Check password
-    if (bcrypt.compareSync(req.body.password, user.password)) {
+    if (bcrypt.compareSync(password, user.password)) {
       console.log('Password match'); // Log password match
-      const role = user.role; // Get user role
-      res.json({ message: "Login successful", role }); // Send success response with role
+
+      // Clear failed attempts after successful login
+      rateLimitCache.delete(username);
+
+      // Generate JWT token
+      const token = jwt.sign(
+        { userId: user._id, username: user.username, role: user.role },  // Payload
+        process.env.JWT_SECRET,  // Secret key from .env
+        { expiresIn: '1h' }      // Token expiration time (1 hour)
+      );
+
+      // Send success response with role and token
+      return res.json({
+        message: "Login successful",
+        role: user.role,
+        token: token // Include token in the response
+      });
     } else {
       console.log('Password mismatch'); // Log password mismatch
-      res.status(401).json({ error: "Wrong password" }); // Send error response for wrong password
+
+      // Increment failed attempts
+      rateLimitEntry.attempts += 1;
+
+      if (rateLimitEntry.attempts >= MAX_ATTEMPTS) {
+        rateLimitEntry.lockoutUntil = currentTime + LOCKOUT_TIME;
+        rateLimitEntry.attempts = 0; // Reset attempts after locking out
+        return res.status(429).json({ error: `Too many failed attempts. Account locked for 5 minutes.` }); // Lockout response
+      }
+
+      rateLimitCache.set(username, rateLimitEntry);
+      const remainingAttempts = MAX_ATTEMPTS - rateLimitEntry.attempts;
+      return res.status(401).json({ error: `Wrong password. ${remainingAttempts} attempts remaining.` }); // Unauthorized
     }
   } catch (err) {
     console.error('Error during login:', err); // Log any errors during login
     res.status(500).json({ error: 'Login failed' }); // Send error response
   }
 });
+
+
 
 // Update user endpoint
 app.patch('/updateUser', verifyToken, verifyUser, async (req, res) => {
