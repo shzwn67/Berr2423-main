@@ -84,7 +84,7 @@ async function verifyUser(req, res, next) {
   next(); // Proceed to next middleware or route handler
 }
 
-console.log("Admin Password from .env:", process.env.ADMIN_PASSWORD);
+//console.log("Admin Password from .env:", process.env.ADMIN_PASSWORD);
 
 //register endpoint
 const { body, validationResult } = require('express-validator');
@@ -146,10 +146,6 @@ app.post('/register', [
 const helmet = require('helmet'); // Import Helmet for security headers
 app.use(helmet()); // Enable Helmet middleware
 
-
-//const { body, validationResult } = require('express-validator');
-//const bcrypt = require('bcrypt');
-//const jwt = require('jsonwebtoken');
 const rateLimitCache = new Map(); // In-memory cache for rate limiting (use Redis for production)
 
 // Configuration
