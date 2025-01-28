@@ -84,8 +84,6 @@ async function verifyUser(req, res, next) {
   next(); // Proceed to next middleware or route handler
 }
 
-//console.log("Admin Password from .env:", process.env.ADMIN_PASSWORD);
-
 //register endpoint
 const { body, validationResult } = require('express-validator');
 

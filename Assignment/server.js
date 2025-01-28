@@ -9,3 +9,4 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.listen(5500, () => {
     console.log('Game is running at https://localhost:5500');
 });
+
